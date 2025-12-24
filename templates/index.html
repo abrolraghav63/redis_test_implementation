@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Search - Redis & MySQL</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 28px;
+        }
+
+        .search-section {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 5px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        button {
+            padding: 12px 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .results-section {
+            display: none;
+        }
+
+        .results-section.show {
+            display: block;
+        }
+
+        .loading {
+            text-align: center;
+            color: #667eea;
+            font-size: 16px;
+            display: none;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            border-left: 4px solid #c62828;
+            display: none;
+        }
+
+        .error.show {
+            display: block;
+        }
+
+        .success {
+            background: #e8f5e9;
+            color: #2e7d32;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            border-left: 4px solid #2e7d32;
+            display: none;
+        }
+
+        .success.show {
+            display: block;
+        }
+
+        .user-card {
+            background: #f5f5f5;
+            border-radius: 8px;
+            padding: 20px;
+            display: none;
+        }
+
+        .user-card.show {
+            display: block;
+        }
+
+        .user-field {
+            margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .user-field:last-child {
+            margin-bottom: 0;
+        }
+
+        .field-label {
+            font-weight: 600;
+            color: #555;
+            min-width: 100px;
+        }
+
+        .field-value {
+            color: #333;
+            font-size: 16px;
+        }
+
+        .clear-btn {
+            background: #999;
+            width: 100%;
+            margin-top: 20px;
+            padding: 10px;
+        }
+
+        .clear-btn:hover {
+            background: #777;
+        }
+
+        .info-text {
+            text-align: center;
+            color: #999;
+            font-size: 12px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 User Search</h1>
+        
+        <div class="search-section">
+            <input 
+                type="text" 
+                id="nameInput" 
+                placeholder="Enter user name..." 
+                autocomplete="off"
+            >
+            <button onclick="searchUser()">Search</button>
+        </div>
+
+        <div class="loading" id="loading">
+            Searching... Please wait
+        </div>
+
+        <div class="error" id="errorMessage"></div>
+        <div class="success" id="successMessage"></div>
+
+        <div class="user-card" id="userCard">
+            <div class="user-field">
+                <span class="field-label">Name:</span>
+                <span class="field-value" id="userName">-</span>
+            </div>
+            <div class="user-field">
+                <span class="field-label">Profession:</span>
+                <span class="field-value" id="userProfession">-</span>
+            </div>
+            <div class="user-field">
+                <span class="field-label">Age:</span>
+                <span class="field-value" id="userAge">-</span>
+            </div>
+            <div class="user-field">
+                <span class="field-label">Country:</span>
+                <span class="field-value" id="userCountry">-</span>
+            </div>
+            <button class="clear-btn" onclick="clearResults()">Clear Results</button>
+        </div>
+
+        <div class="info-text">
+            Data is cached in Redis for faster retrieval
+        </div>
+    </div>
+
+    <script>
+        const nameInput = document.getElementById('nameInput');
+
+        // Allow search on Enter key press
+        nameInput.addEventListener('keypress', function(event) {
+            if (event.key === 'Enter') {
+                searchUser();
+            }
+        });
+
+        async function searchUser() {
+            const name = nameInput.value.trim();
+            
+            if (!name) {
+                showError('Please enter a name');
+                return;
+            }
+
+            showLoading(true);
+            clearMessages();
+
+            try {
+                const response = await fetch('/api/search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ name: name })
+                });
+
+                const result = await response.json();
+                showLoading(false);
+
+                if (result.success) {
+                    displayUserData(result.data);
+                    showSuccess('User found successfully!');
+                } else {
+                    showError(result.error || 'User not found');
+                    hideUserCard();
+                }
+            } catch (error) {
+                showLoading(false);
+                showError('Error: ' + error.message);
+                hideUserCard();
+            }
+        }
+
+        function displayUserData(user) {
+            document.getElementById('userName').textContent = user.name || '-';
+            document.getElementById('userProfession').textContent = user.profession || '-';
+            document.getElementById('userAge').textContent = user.age || '-';
+            document.getElementById('userCountry').textContent = user.country || '-';
+            
+            document.getElementById('userCard').classList.add('show');
+        }
+
+        function hideUserCard() {
+            document.getElementById('userCard').classList.remove('show');
+        }
+
+        function showLoading(show) {
+            const loading = document.getElementById('loading');
+            if (show) {
+                loading.classList.add('show');
+            } else {
+                loading.classList.remove('show');
+            }
+        }
+
+        function showError(message) {
+            const errorEl = document.getElementById('errorMessage');
+            errorEl.textContent = message;
+            errorEl.classList.add('show');
+        }
+
+        function showSuccess(message) {
+            const successEl = document.getElementById('successMessage');
+            successEl.textContent = message;
+            successEl.classList.add('show');
+        }
+
+        function clearMessages() {
+            document.getElementById('errorMessage').classList.remove('show');
+            document.getElementById('successMessage').classList.remove('show');
+        }
+
+        function clearResults() {
+            nameInput.value = '';
+            hideUserCard();
+            clearMessages();
+            nameInput.focus();
+        }
+    </script>
+</body>
+</html>
